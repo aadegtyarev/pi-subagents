@@ -25,6 +25,7 @@ import { recordWaitCompletion } from "./wait-completions.ts";
 import { MISSION_BINDING_FILE, syncMissionFromAsyncCompletion } from "../../missions/lifecycle.ts";
 import { missionObserverResultCandidateFiles, promotePendingResultFile, removeMissionObserverIndex, removeResultIndex, resultCandidateFilesForSession, resultPayloadPathForIndexedRun, resultPayloadPathForMissionObserverRun, resultPayloadPathForSessionRun, writeAsyncResultFile, writeResultIndexForData } from "./result-files.ts";
 import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
+import { buildAsyncUsageAccountingEntry, type AsyncUsageAccountingEntry } from "./async-usage-accounting.ts";
 import type { ResultDeliveryOwnership } from "./result-delivery-ownership.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
@@ -63,12 +64,21 @@ type ResultWatcherDeps = {
 	platform?: NodeJS.Platform;
 	/** Shared current/predecessor session ownership used by the notifier. */
 	ownership?: Pick<ResultDeliveryOwnership, "owns" | "claimedSessionIds">;
+	/** Persists one sanitized usage entry into the currently owned parent branch. */
+	persistUsageAccounting?: (entry: AsyncUsageAccountingEntry, sessionId: string) => boolean;
 	/** Called once the parent has this run's result: the notifier accepted it, or an earlier delivery already did. */
 	onResultDelivered?: (runId: string) => void;
 };
 
 type ResultFileChild = {
 	agent?: string;
+	provider?: string;
+	model?: string;
+	requestedModel?: string;
+	thinking?: string | boolean;
+	usage?: unknown;
+	totalCost?: unknown;
+	sessionFile?: string;
 	sessionName?: string;
 	output?: string;
 	structuredOutput?: unknown;
@@ -83,7 +93,6 @@ type ResultFileChild = {
 	stopped?: boolean;
 	turnBudgetExceeded?: boolean;
 	processSignal?: string | null;
-	sessionFile?: string;
 	artifactPaths?: { outputPath?: string };
 	outputSaveError?: string;
 	artifactOutputSaveFailed?: true;
@@ -444,6 +453,19 @@ export function createResultWatcher(
 				resultsDir,
 				sessionId,
 			});
+			const accountingEntry = buildAsyncUsageAccountingEntry(runId, data.results?.length ? data.results : [data]);
+			if (accountingEntry && deps.persistUsageAccounting) {
+				try {
+					if (!deps.persistUsageAccounting(accountingEntry, sessionId)) {
+						scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+						return;
+					}
+				} catch (error) {
+					console.error(`Failed to persist async usage accounting for '${runId}':`, error);
+					scheduleResult(file, triggerTurn, RETRY_DELAY_MS);
+					return;
+				}
+			}
 			const hasExplicitNestedChildren = data.nestedChildren !== undefined;
 			let nestedChildren = compactNestedResultChildren(sanitizeNestedResultChildren(data.nestedChildren, resultPath, "nestedChildren"));
 			if (!nestedChildren?.length && !hasExplicitNestedChildren) {

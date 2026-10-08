@@ -10,6 +10,8 @@ import { createResultWatcher as createRawResultWatcher } from "../../src/runs/ba
 import { collectWaitCompletions } from "../../src/runs/background/wait-completions.ts";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
+import { buildAsyncUsageAccountingEntry, persistAsyncUsageAccountingEntry } from "../../src/runs/background/async-usage-accounting.ts";
+import { resolveCurrentSessionId } from "../../src/shared/session-identity.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
 import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
@@ -18,6 +20,8 @@ import { readMission, updateMission } from "../../src/missions/store.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../src/shared/types.ts";
 import type { AsyncRunSummary } from "../../src/runs/background/async-status.ts";
+import { makeAgent } from "../support/helpers.ts";
+import { installAsyncExecutionHooks, available as asyncExecutionAvailable, isAsyncAvailable, executeAsyncSingle, mockPi, tempDir, readAsyncPayload } from "../support/async-execution-fixture.ts";
 
 const COMPLETION_OWNER_ID = "completion-owner-default";
 
@@ -70,6 +74,124 @@ async function waitForPredicate(predicate: () => boolean, timeoutMs = 2_500): Pr
 }
 
 describe("result watcher", () => {
+	installAsyncExecutionHooks();
+
+	it("persists production-serialized terminal usage once across reload and into owned predecessor branches", { skip: !asyncExecutionAvailable || !isAsyncAvailable() ? "async runner unavailable" : undefined }, async () => {
+		const id = `watcher-usage-${Date.now().toString(36)}`;
+		mockPi.onCall({ output: "production terminal usage test" });
+		const launch = executeAsyncSingle!(id, {
+			agent: "worker",
+			task: "Return a short result. Do not edit files.",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "/sessions/parent.jsonl" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+		assert.equal(launch?.isError, undefined, launch?.content[0]?.text);
+		const terminalResult = await readAsyncPayload(id) as unknown as Record<string, any>;
+		const terminalChild = terminalResult.results[0] as Record<string, any>;
+		// Provenance: executeAsyncSingle launches the repository's production subagent runner;
+		// readAsyncPayload reads the terminal JSON written by subagent-runner.ts, not a schema-built fixture.
+		assert.equal(terminalResult.id, id);
+		assert.equal(typeof terminalResult.sessionId, "string");
+		assert.equal(typeof terminalResult.agent, "string");
+		assert.equal(typeof terminalResult.mode, "string");
+		assert.equal(typeof terminalResult.state, "string");
+		assert.equal(typeof terminalResult.timestamp, "number");
+		assert.equal(typeof terminalResult.durationMs, "number");
+		assert.ok(Object.hasOwn(terminalResult, "outputs"));
+		assert.equal(terminalChild.agent, "worker");
+		assert.equal(terminalChild.runId, undefined, "production result items do not normally expose a child runId");
+		assert.equal(terminalChild.provider, undefined, "production result items do not expose provider attribution");
+		assert.ok(typeof terminalChild.usage.input === "number" && terminalChild.usage.input > 0);
+		assert.ok(typeof terminalChild.usage.output === "number" && terminalChild.usage.output > 0);
+		const projected = buildAsyncUsageAccountingEntry(id, terminalResult.results);
+		assert.ok(projected, "production terminal serialization must retain accounting metrics");
+		assert.equal(projected.results[0]?.resultId, `${id}:result:0`);
+		assert.equal(projected.results[0]?.agent, "worker");
+		assert.equal(projected.results[0]?.sessionFile, terminalChild.sessionFile);
+		assert.equal(projected.results[0]?.usage?.input, terminalChild.usage.input);
+		assert.equal(projected.results[0]?.usage?.output, terminalChild.usage.output);
+		assert.ok(Object.keys(projected.results[0]!).every((key) => ["resultId", "agent", "provider", "model", "requestedModel", "thinking", "sessionFile", "usage", "totalCost"].includes(key)));
+		assert.equal("output" in projected.results[0]!, false);
+		assert.equal("context" in projected.results[0]!, false);
+		let resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-usage-"));
+		const branch: Array<{ type: string; id?: string; parentId?: string | null; timestamp?: string; customType?: string; data?: unknown }> = [];
+		const parentFile = terminalResult.sessionId as string;
+		const runWatcher = async (input: { state: SubagentState; ownership: ReturnType<typeof createResultDeliveryOwnership>; parentFile: string; result: Record<string, unknown>; expectDelivery?: boolean }) => {
+			const manager = {
+				getSessionId: () => `runtime-uuid:${input.parentFile}`,
+				getSessionFile: () => input.parentFile,
+				getBranch: () => branch,
+			};
+			const persistUsage = (entry: Parameters<typeof persistAsyncUsageAccountingEntry>[0]["entry"], sourceSessionId: string) => {
+				let activeSessionId: string;
+				try { activeSessionId = resolveCurrentSessionId(manager); } catch { return false; }
+				if (activeSessionId !== input.state.currentSessionId) return false;
+				return persistAsyncUsageAccountingEntry({
+					entry, sourceSessionId, currentSessionId: activeSessionId, branch,
+					ownsSourceSession: (ownedSessionId) => input.ownership.owns(ownedSessionId, input.state.completionOwnerId),
+					appendEntry(customType, data) {
+						branch.push({ type: "custom", id: `entry-${branch.length}`, parentId: branch.at(-1)?.id ?? null, timestamp: "2026-10-07T15:00:00.000Z", customType, data });
+					},
+				});
+			};
+			const delivered: string[] = [];
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, input.state, resultsDir, 60_000, {
+				deliverIntercomResults: false,
+				ownership: input.ownership,
+				notifier: { async deliver(result) { delivered.push(result.runId ?? result.id ?? ""); return true; } },
+				persistUsageAccounting: persistUsage,
+			});
+			watcher.startResultWatcher();
+			const resultId = String(input.result.runId ?? input.result.id);
+			const resultPath = path.join(resultsDir, `${resultId}.json`);
+			writeIndexedResult(resultPath, input.result);
+			await waitForPredicate(() => input.expectDelivery !== false && delivered.length > 0 && !fs.existsSync(resultPath), input.expectDelivery === false ? 150 : 2_500);
+			watcher.stopResultWatcher();
+			return delivered;
+		};
+		try {
+			const firstState = createState();
+			firstState.currentSessionId = parentFile;
+			const firstOwnership = createResultDeliveryOwnership(firstState);
+			const firstResult = { ...terminalResult, completionOwnerId: COMPLETION_OWNER_ID };
+			assert.deepEqual(await runWatcher({ state: firstState, ownership: firstOwnership, parentFile, result: firstResult }), [id]);
+			assert.equal(branch.length, 1);
+			assert.deepEqual(branch[0]!.data, projected);
+			assert.equal(JSON.stringify(branch).includes("production terminal usage test"), false);
+
+			// Reload recreates runtime state and result storage while preserving the active transcript branch.
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+			resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-usage-reload-"));
+			const reloadedState = createState();
+			reloadedState.currentSessionId = parentFile;
+			const reloadedOwnership = createResultDeliveryOwnership(reloadedState);
+			const replayedResult = { ...firstResult, timestamp: Number(firstResult.timestamp) + 1 };
+			assert.deepEqual(await runWatcher({ state: reloadedState, ownership: reloadedOwnership, parentFile, result: replayedResult }), [id]);
+			assert.equal(branch.length, 1);
+
+			const predecessorFile = "/sessions/predecessor.jsonl";
+			const replacementFile = "/sessions/replacement.jsonl";
+			const replacementState = createState();
+			replacementState.currentSessionId = predecessorFile;
+			const replacementOwnership = createResultDeliveryOwnership(replacementState);
+			assert.equal(replacementOwnership.claimPredecessor(predecessorFile, predecessorFile), true);
+			replacementState.currentSessionId = replacementFile;
+			const predecessorResult = { ...firstResult, id: "predecessor-run", runId: "predecessor-run", sessionId: predecessorFile };
+			assert.deepEqual(await runWatcher({ state: replacementState, ownership: replacementOwnership, parentFile: replacementFile, result: predecessorResult }), ["predecessor-run"]);
+			assert.equal(branch.length, 2);
+			assert.equal((branch[1]!.data as { runId: string }).runId, "predecessor-run");
+			const foreignResult = { ...firstResult, id: "foreign-run", runId: "foreign-run", sessionId: "/sessions/foreign.jsonl" };
+			assert.deepEqual(await runWatcher({ state: replacementState, ownership: replacementOwnership, parentFile: replacementFile, result: foreignResult, expectDelivery: false }), []);
+			assert.equal(fs.existsSync(path.join(resultsDir, "foreign-run.json")), true);
+			assert.equal(branch.length, 2, "foreign sessions cannot append into the replacement branch");
+		} finally {
+			fs.rmSync(resultsDir, { recursive: true, force: true });
+		}
+	});
 	it("keeps running workflow launch receipts nonterminal in notifications and completion events", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-dispatch-"));
 		const state = createState();

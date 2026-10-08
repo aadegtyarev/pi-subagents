@@ -43,6 +43,7 @@ import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, res
 import { cleanupResultIndexes, missionObserverResultCandidateFiles, resultFilePath } from "../runs/background/result-files.ts";
 import { ASYNC_RETENTION_DELAY_MS, cleanupAsyncRetention } from "../runs/background/async-retention.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
+import { persistAsyncUsageAccountingEntry, type AsyncUsageAccountingEntry } from "../runs/background/async-usage-accounting.ts";
 import { createResultDeliveryOwnership } from "../runs/background/result-delivery-ownership.ts";
 import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
@@ -395,6 +396,26 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const mainWatchdog = registerMainWatchdog(pi);
 	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
 	const completionNotifier = registerSubagentNotify(wakingPi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
+	let accountingSessionManager: Pick<ExtensionContext["sessionManager"], "getSessionId" | "getSessionFile" | "getBranch"> | undefined;
+	const persistUsageAccounting = (entry: AsyncUsageAccountingEntry, sessionId: string): boolean => {
+		const manager = accountingSessionManager;
+		if (!manager) return false;
+		let activeSessionId: string;
+		try {
+			activeSessionId = resolveCurrentSessionId(manager);
+		} catch {
+			return false;
+		}
+		if (activeSessionId !== state.currentSessionId) return false;
+		return persistAsyncUsageAccountingEntry({
+			entry,
+			sourceSessionId: sessionId,
+			currentSessionId: activeSessionId,
+			branch: manager.getBranch(),
+			ownsSourceSession: (sourceSessionId) => resultDeliveryOwnership.owns(sourceSessionId, state.completionOwnerId),
+			appendEntry: pi.appendEntry.bind(pi),
+		});
+	};
 	// Ended async runs whose result has not reached the notifier yet.
 	const owedResultRunIds = new Set<string>();
 	// Tracked runs whose result was already delivered, so a later terminal
@@ -525,6 +546,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		{
 			notifier: completionNotifier,
 			ownership: resultDeliveryOwnership,
+			persistUsageAccounting,
 			onResultDelivered: (runId) => {
 				owedResultRunIds.delete(runId);
 				if (state.asyncJobs.has(runId)) deliveredRunIds.add(runId);
@@ -1157,6 +1179,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", (event, ctx) => {
 		parentWake.bindSession(ctx);
+		accountingSessionManager = ctx.sessionManager;
 		completionNotifier.bindSession(ctx.sessionManager);
 		installRuntime(ctx);
 		startSessionMaintenance();
