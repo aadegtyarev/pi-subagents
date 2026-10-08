@@ -95,6 +95,13 @@ export interface CompletionNotification {
 		runId?: string;
 		workflowKey?: string;
 		agent?: string;
+		provider?: string;
+		model?: string;
+		requestedModel?: string;
+		thinking?: string | boolean;
+		usage?: unknown;
+		totalCost?: unknown;
+		sessionFile?: string;
 		status?: string;
 		state?: string;
 		revival?: string;
@@ -117,6 +124,12 @@ export interface CompletionNotification {
 		watchdog?: ChildWatchdogProgress;
 	}>;
 	watchdog?: ChildWatchdogProgress;
+	usage?: unknown;
+	totalCost?: unknown;
+	provider?: string;
+	model?: string;
+	requestedModel?: string;
+	thinking?: string | boolean;
 	timestamp?: number;
 	durationMs?: number;
 	cwd?: string;
