@@ -6,12 +6,16 @@
 
 `pi-subagents` lets Pi delegate work to focused child agents. Use it for code review, scouting, implementation, parallel audits, saved workflows, background jobs, and anything else that benefits from a second or third set of model eyes.
 
+## Operator-owned fork
+
+This repository is the operator-owned [`aadegtyarev/pi-subagents`](https://github.com/aadegtyarev/pi-subagents) fork. Its `main` branch is the deployment source; local changes are delivered here and are not intended to be proposed or merged upstream unless the owner explicitly changes this policy.
+
 <https://github.com/user-attachments/assets/702554ec-faaf-4635-80aa-fb5d6e292fd1>
 
 ## Install
 
 ```bash
-pi install npm:pi-subagents
+pi install git:github.com/aadegtyarev/pi-subagents
 ```
 
 That is the only required step. Background children use the host's SDK: npm Pi keeps its detached Node runner; the official Pi 0.86.1 Linux x64 standalone release loads the same runner through Pi's embedded SDK, without a separate SDK install. See [Standalone background execution](docs/standalone-background.md) for the supported boundary and validation gate.
