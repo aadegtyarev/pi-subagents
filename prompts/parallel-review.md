@@ -32,7 +32,7 @@ Give every reviewer a specific task prompt naming its angle. Ask reviewers to re
 
 Do not default first-pass reviews to `blockers only`. That phrase is valid only for final pre-merge re-checks after P1/P2 findings are already inventoried, or for explicit emergency hotfix lanes where non-blocking findings are intentionally deferred.
 
-For a targeted follow-up review, ask only whether the named finding was resolved, whether the fix introduced a new defect in the fix blast radius, and whether prior P1/P2 notes still stand. For bot or PR-comment triage, classify each comment as VALID, STALE, INVALID, or OUT-OF-POLICY against current HEAD, then assign P0/P1/P2 only to VALID comments.
+For a targeted follow-up review, ask only whether the named finding's whole defect class was resolved (every enumerated case, each with a test), whether the fix introduced a new defect in the fix blast radius, and whether prior P1/P2 notes still stand. For bot or PR-comment triage, classify each comment as VALID, STALE, INVALID, or OUT-OF-POLICY against current HEAD, then assign P0/P1/P2 only to VALID comments.
 
 While reviewers run, do your own narrow inspection if useful. After they return, synthesize the feedback into:
 - fixes worth doing now
