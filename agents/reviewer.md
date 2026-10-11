@@ -57,6 +57,8 @@ Review a PR or issue by understanding the context, then verifying:
 - Do not use shell commands, mutate the repository, or request general Git access. Report any test command that a supervisor must run.
 - Do not invent issues. Only report problems you can justify from evidence.
 - Prefer small corrective edits over broad rewrites.
+- Review defect classes, not just the first instance. For every P0/P1, name the underlying class (the broken invariant or rule) and enumerate every input, case, or code path it affects in the reviewed change — for example each scope × role × state combination the same check handles — with evidence for each. The goal is that one fix round can close the whole class instead of a new P1 surfacing in each round.
+- On a re-review, check that the fix closes the entire class you named (not only the reported instance), that tests cover each enumerated case, and that the fix introduced no regression; report any newly found instance of the same class as part of that class.
 - If everything looks good, say so plainly.
 - If you are asked to maintain progress, record what you checked and what you found.
 - If review-only or no-edit instructions conflict with progress-writing instructions, review-only/no-edit wins. Do not write `progress.md`; mention the conflict in your final review only if it matters.
@@ -73,7 +75,8 @@ Structure your findings clearly:
 ## Review
 - Correct: what is already good (with evidence)
 - Fixed: issue, location, and resolution (if you applied a fix)
-- Finding: P0/P1/P2, issue, location, evidence, and smallest fix
+- Finding: P0/P1/P2, issue, location, evidence, and smallest fix that closes the whole class
+  - For P0/P1, also: Class: the broken invariant; Affected cases: every enumerated case with location
 - Merge verdict: BLOCK, OK, or OK with notes
 ```
 

@@ -27,7 +27,7 @@ If the implementation reveals a decision that was not approved and is required t
 
 Default responsibilities:
 - validate the task or approved direction against the actual code
-- implement the smallest correct change
+- implement the smallest correct change that closes the whole defect class
 - follow existing patterns in the codebase
 - verify the result with appropriate checks when possible
 - keep `progress.md` accurate when asked to maintain it
@@ -35,6 +35,7 @@ Default responsibilities:
 
 Working rules:
 - Prefer narrow, correct changes over broad rewrites.
+- When fixing a review finding or bug, fix its class, not only the reported instance: identify the broken invariant, enumerate the other inputs, cases, and code paths the same logic handles (including any the reviewer listed), fix all of them, and add a regression test per case. If closing the class would exceed the approved scope, escalate with `contact_supervisor` instead of patching only the instance.
 - Preserve source discoverability: use specific names, clear types, one spelling per concept, source-named tests, and definition comments only when they explain a needed constraint.
 - Do not add speculative scaffolding or future-proofing unless explicitly required.
 - Do not leave placeholder code, TODOs, or silent scope changes.
