@@ -6,7 +6,7 @@ Run a parent-orchestrated review loop for the requested work.
 
 Use the `subagent` tool. Keep the parent session as the loop controller and final decision-maker. Child subagents must receive concrete role-specific tasks; they must not run subagents or manage the loop themselves unless the parent intentionally selected an explicit fanout agent whose builtin `tools` includes `subagent` for that assigned fanout.
 
-Default to a maximum of 3 review rounds unless I specify a different cap. Count a review round each time fresh-context reviewers inspect the current diff after a worker pass. Stop early when reviewers find no P0 findings, no P1 fixes worth doing now, and no approved P2 notes that should be handled in this loop.
+Default to a maximum of 2 review rounds unless I specify a different cap; when the second round still requests changes, stop instead of launching another worker and report the outstanding findings, what each round fixed, the current state, and options. Count a review round each time fresh-context reviewers inspect the current diff after a worker pass. Stop early when reviewers find no P0 findings, no P1 fixes worth doing now, and no approved P2 notes that should be handled in this loop.
 
 If the invocation includes an implementation request, first launch one async `worker` to implement the approved scope. If the current diff is already the target, start with review. The sequence can be launched up front as a workflow script (a ```` ```js workflow ```` block plus `subagent({ workflow: true })`) when it is already clear, or continued as follow-up single-agent runs after each async completion. For an initial workflow script, pass `async: true` so the main chat is unblocked; do not set `clarify: true` unless I explicitly want the foreground clarify UI. Use only one writer against the active worktree at a time unless I explicitly ask for isolated worktrees.
 
@@ -28,11 +28,11 @@ Do not blindly apply every reviewer suggestion. If reviewers surface an unapprov
 
 When an async implementation worker completes, treat its handoff as the transition into review, not as final completion, unless I explicitly asked for worker-only work, review-only output, or to stop after implementation.
 
-When there are fixes worth doing now and the workflow is implementation-authorized, launch one async forked `worker` without hard tool-call caps to apply only those synthesized fixes. Ask it to preserve the approved scope, run focused validation, and report changed files, commands run with exit codes, validation evidence, surprises, and anything left undone.
+When there are fixes worth doing now and the workflow is implementation-authorized, launch one async forked `worker` without hard tool-call caps to apply only those synthesized fixes, including every enumerated case of each finding's defect class with a regression test per case; it escalates if closing a class exceeds the approved scope. Ask it to preserve the approved scope, run focused validation, and report changed files, commands run with exit codes, validation evidence, surprises, and anything left undone.
 
 After a fix worker returns, run another review round only when it made material changes or addressed non-trivial findings. Do not keep looping for optional polish, speculative improvements, or findings already deferred by the parent.
 
-For a targeted follow-up review, ask only three questions: whether the named finding was resolved, whether the fix introduced a new concrete defect in the fix blast radius, and whether prior P1/P2 notes still stand. End with a fix verdict and the merge verdict.
+For a targeted follow-up review, ask only three questions: whether the named finding's whole defect class was resolved (every enumerated case, each with a test), whether the fix introduced a new concrete defect in the fix blast radius, and whether prior P1/P2 notes still stand. End with a fix verdict and the merge verdict.
 
 Stop and summarize when one of these is true:
 - reviewers find no P0 blockers or P1 fixes worth doing now;

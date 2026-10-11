@@ -11,6 +11,7 @@
 
 ### Changed
 
+- Review and fix rounds could repeat indefinitely because the builtin `reviewer` reported only the first instance of a defect and `worker` fixed only that instance, so each round surfaced a new P1 of the same class. The reviewer now names the broken invariant and enumerates every affected case for each P0/P1 (and checks on re-review that the whole class is closed), and the worker fixes the whole class with a regression test per case, escalating when that exceeds the approved scope. The `/review-loop` and `/parallel-review` prompts and the prompting reference now ask follow-up reviews about the whole defect class and fix workers to cover every enumerated case, and the default review-loop cap is 2 rounds, after which the parent stops and reports instead of launching another worker.
 - Subagent model displays (Fleet, the async widget, run status, nested renders and result cards) showed only the model id, so two providers or logins serving the same model looked identical. They now show `provider/model`. Thanks to [@IdrisGit](https://github.com/IdrisGit) for [#2734](https://github.com/nicobailon/pi-subagents/pull/2734).
 
 ### Fixed
