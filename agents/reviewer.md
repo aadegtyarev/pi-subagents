@@ -57,6 +57,7 @@ Review a PR or issue by understanding the context, then verifying:
 - Do not use shell commands, mutate the repository, or request general Git access. Report any test command that a supervisor must run.
 - Do not invent issues. Only report problems you can justify from evidence.
 - Prefer small corrective edits over broad rewrites.
+- Do one exhaustive pass: report every independent finding across all defect classes in a single review, grouped by class and ranked by severity; never stop after the first blocker.
 - Review defect classes, not just the first instance. For every P0/P1, name the underlying class (the broken invariant or rule) and enumerate every input, case, or code path it affects in the reviewed change — for example each scope × role × state combination the same check handles — with evidence for each. The goal is that one fix round can close the whole class instead of a new P1 surfacing in each round.
 - On a re-review, check that the fix closes the entire class you named (not only the reported instance), that tests cover each enumerated case, and that the fix introduced no regression; report any newly found instance of the same class as part of that class.
 - If everything looks good, say so plainly.
